@@ -7,7 +7,7 @@ Here's a simple README file ito explain how to use the provided Python script.
 ## Requirement
 Use the code below to install the necessary package.
 ```
-pip install mediapipe
+pip install tkinter pillow opencv-python numpy mediapipe
 ```
 
 
