@@ -4,7 +4,7 @@ The coursework for Computer Vision in UNNC
 Here's a simple README file ito explain how to use the provided Python script. 
 
 
-# Requirement
+## Requirement
 Use the code below to install the necessary package.
 ```
 pip install mediapipe
