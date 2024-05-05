@@ -7,8 +7,10 @@ import mediapipe as mp
 
 
 class VideoProcessor:
+    """Handles video processing for person tracking and pose estimation using YOLO and MediaPipe."""
+
     def __init__(self):
-        # Load YOLO and Pose Estimation
+        """Initializes the video processor with YOLO model and MediaPipe pose estimation."""
         self.net = cv2.dnn.readNet(r"model/yolov4.weights", r"model/yolov4.cfg")
         self.classes = [line.strip() for line in open(r"model/coco.names", "r")]
         self.layer_names = self.net.getLayerNames()
@@ -18,6 +20,7 @@ class VideoProcessor:
         self.cap = None
 
     def process_frame(self, frame):
+        """Processes each frame of the video to detect persons and estimate their poses."""
         if frame is None:
             print("Empty frame received.")
             return None  # Return None if the frame is empty
@@ -50,6 +53,9 @@ class VideoProcessor:
         if len(indices) == 0:
             return frame  # Return the original frame if no detections
 
+        # Default box color
+        box_color = (0, 255, 0)  # Default to green box
+
         for i in indices.flatten():
             box = boxes[i]
             x, y, w, h = box
@@ -71,35 +77,35 @@ class VideoProcessor:
                 action = self.estimate_action(results.pose_landmarks)
                 fall_detected = self.detect_fall(results.pose_landmarks)
 
-                box_color = (0, 255, 0)  # Default to green box
-                text = action if action != "Unsure" else ""  # Only display action if not 'Unsure'
+                text = action
 
                 if fall_detected:
                     box_color = (0, 0, 255)  # Change to red if fall is detected
                     text = "Falling Down"  # Change text when a fall is detected
 
-                # Ensure the text is displayed within the bounds of the image
-                text_location = self.calculate_text_location(x, y, w, h, text)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
+                # Calculate the position of the text
+                text_location = (x + 5, y + 15) if y > 20 else (x + 5, y + h - 5)
+
+                # Draw the text
                 cv2.putText(frame, text, text_location, cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+            cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
 
         return frame
 
     def detect_fall(self, pose_landmarks):
-        # Refine fall detection logic to reduce false positives
+        """Detects if a person is falling down based on the position of their nose relative to their hips."""
         landmarks = pose_landmarks.landmark
         nose = landmarks[mp.solutions.pose.PoseLandmark.NOSE.value]
         mid_hip = (landmarks[mp.solutions.pose.PoseLandmark.LEFT_HIP.value].y +
                    landmarks[mp.solutions.pose.PoseLandmark.RIGHT_HIP.value].y) / 2
-        # A fall is detected if the nose is close to the mid-hip level, suggesting horizontal orientation
         if nose.y > mid_hip - 0.1:
             return True
         return False
 
     def estimate_action(self, pose_landmarks):
+        """Estimates the action being performed by a person based on their pose landmarks."""
         landmarks = pose_landmarks.landmark
-
-        # Retrieve necessary landmarks
         l_hip = landmarks[self.mp_pose.PoseLandmark.LEFT_HIP.value]
         l_knee = landmarks[self.mp_pose.PoseLandmark.LEFT_KNEE.value]
         l_ankle = landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value]
@@ -107,8 +113,8 @@ class VideoProcessor:
         r_knee = landmarks[self.mp_pose.PoseLandmark.RIGHT_KNEE.value]
         r_ankle = landmarks[self.mp_pose.PoseLandmark.RIGHT_ANKLE.value]
 
-        # Calculate knee angles using a defined function
         def calculate_angle(a, b, c):
+            """Calculates the angle between three points."""
             a = np.array([a.x, a.y])
             b = np.array([b.x, b.y])
             c = np.array([c.x, c.y])
@@ -124,11 +130,7 @@ class VideoProcessor:
         left_knee_angle = calculate_angle(l_hip, l_knee, l_ankle)
         right_knee_angle = calculate_angle(r_hip, r_knee, r_ankle)
 
-        # Check vertical alignment of hips and ankles
-        def is_vertically_aligned(hip, ankle):
-            return abs(hip.y - ankle.y) < 0.1  # Tune this threshold based on empirical data
-
-        if (is_vertically_aligned(l_hip, l_ankle) or is_vertically_aligned(r_hip, r_ankle)) and (
+        if (abs(l_hip.y - l_ankle.y) < 0.1 or abs(r_hip.y - r_ankle.y) < 0.1) and (
                 left_knee_angle < 120 or right_knee_angle < 120):
             return 'Sitting'
         elif left_knee_angle > 165 and right_knee_angle > 165:
@@ -138,16 +140,12 @@ class VideoProcessor:
         else:
             return 'Running'
 
-    def calculate_text_location(self, x, y, w, h, text):
-        # Calculate text location dynamically based on box position and size
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-        text_x = x + (w - text_size[0]) // 2  # Center text horizontally within the box
-        text_y = y + h - 5  # Adjusted to be within the lower part of the box
-        return (text_x, text_y)
-
 
 class VideoTrackerApp:
+    """Main application for tracking persons in video streams."""
+
     def __init__(self, window, window_title):
+        """Initializes the main application with a window and title."""
         self.window = window
         self.window.title(window_title)
 
@@ -168,27 +166,36 @@ class VideoTrackerApp:
         self.btn_reset = tk.Button(self.btn_frame, text="Reset", command=self.reset_video)
         self.btn_reset.pack(side=tk.LEFT, expand=True)
 
+        self.tracking_active = False  # Flag to check if tracking is already active
+
     def open_video(self):
+        """Opens a file dialog to select and open a video file, resets any ongoing video processing."""
+        self.reset_video()
         self.processor.cap = cv2.VideoCapture(filedialog.askopenfilename())
         ret, frame = self.processor.cap.read()
         if ret:
             self.display_image(frame)
 
     def start_tracking(self):
+        """Starts the video tracking process if it's not already running."""
         if not self.processor.cap.isOpened():
             self.processor.cap = cv2.VideoCapture(filedialog.askopenfilename())
-        fps = self.processor.cap.get(cv2.CAP_PROP_FPS)
-        self.processor.delay = int(1000 / fps)
-        self.update_frame()
+        if not self.tracking_active:  # Check if tracking is not already active
+            fps = self.processor.cap.get(cv2.CAP_PROP_FPS)
+            self.processor.delay = int(1000 / fps)
+            self.update_frame()
+            self.tracking_active = True  # Set the flag to indicate tracking is active
 
     def reset_video(self):
+        """Resets the video stream by releasing the capture and clearing the canvas, also resets the tracking flag."""
         if self.processor.cap and self.processor.cap.isOpened():
             self.processor.cap.release()
         self.processor.cap = None
         self.canvas.delete("all")
-        print("Reset the Video.")
+        self.tracking_active = False  # Reset the tracking flag
 
     def update_frame(self):
+        """Updates the frame in the video stream."""
         if self.processor.cap and self.processor.cap.isOpened():
             ret, frame = self.processor.cap.read()
             if ret:
@@ -198,12 +205,15 @@ class VideoTrackerApp:
                 self.processor.cap.release()
                 self.processor.cap = None
                 print("Video ended or failed to read frame.")
+                self.tracking_active = False  # Reset tracking flag if video ends or fails
         else:
             if self.processor.cap:
                 self.processor.cap.release()
             self.processor.cap = None
+            self.tracking_active = False  # Ensure tracking flag is reset when there's no more video
 
     def display_image(self, frame):
+        """Displays the processed frame on the canvas."""
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(image)
         image = ImageTk.PhotoImage(image)
